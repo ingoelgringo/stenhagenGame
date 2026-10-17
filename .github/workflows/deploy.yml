@@ -1,0 +1,68 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+
+# En deploy i taget. Köade körningar väntar på den som pågår.
+concurrency:
+  group: deploy-stenhagen
+  cancel-in-progress: false
+
+# Spelet är statiskt och har inget byggsteg. Filerna skickas med rsync till en ny release-katalog,
+# och Nginx serverar det som `current` pekar på under ingemar.berghult.com/stenhagen/.
+# Se vps-infra/apps/stenhagen.md.
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      TARGET: ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}
+      APP_DIR: /home/deploy/stenhagen
+      RELEASE: ${{ github.sha }}
+      DOMAIN: ingemar.berghult.com
+    steps:
+      - uses: actions/checkout@v5
+
+      # Bara det spelet laddar. images/ (originalbilderna), docs/ och GAME_DESIGN.md stannar i repot.
+      - name: Packa
+        run: |
+          mkdir site
+          cp -r index.html manifest.webmanifest js assets site/
+
+      - name: SSH-nyckel
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H "$VPS_HOST" >> ~/.ssh/known_hosts
+
+      - name: rsync till servern
+        run: |
+          rsync -az --mkpath --link-dest="$APP_DIR/current/" site/ "$TARGET:$APP_DIR/releases/$RELEASE/"
+
+      - name: Kontrollera, byt release och hälsokontroll
+        run: |
+          ssh "$TARGET" APP_DIR="$APP_DIR" RELEASE="$RELEASE" DOMAIN="$DOMAIN" bash -s <<'SCRIPT'
+          set -e
+          cd "$APP_DIR"
+          rel="releases/$RELEASE"
+          # Alla filer sidan laddar måste finnas innan bytet.
+          for f in index.html manifest.webmanifest js/sprites.js js/game.js assets/gata.png assets/gard.png; do
+            test -s "$rel/$f" || { echo "Missing $rel/$f"; exit 1; }
+          done
+          previous=$(readlink current || true)
+          ln -sfn "$rel" current
+          # Genom Nginx och TLS, som en besökare får den. Misslyckas den återställs förra releasen.
+          if ! curl -sf --resolve "$DOMAIN:443:127.0.0.1" "https://$DOMAIN/stenhagen/" | grep -q '<title>Spring i Stenhagen</title>'; then
+            echo "Health check failed"
+            if [ -n "$previous" ]; then ln -sfn "$previous" current; echo "Restored $previous"; fi
+            exit 1
+          fi
+          echo "Health check OK"
+          # Behåll de tre senaste releaserna.
+          ls -1dt "$APP_DIR"/releases/*/ | tail -n +4 | xargs -r rm -rf
+          SCRIPT

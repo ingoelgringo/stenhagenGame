@@ -1,0 +1,9 @@
+{
+  "name": "Spring i Stenhagen",
+  "short_name": "Stenhagen",
+  "start_url": "./index.html",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#10142a",
+  "theme_color": "#10142a"
+}
