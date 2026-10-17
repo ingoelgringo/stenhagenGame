@@ -51,7 +51,8 @@ jobs:
           cd "$APP_DIR"
           rel="releases/$RELEASE"
           # Alla filer sidan laddar måste finnas innan bytet.
-          for f in index.html manifest.webmanifest js/sprites.js js/game.js assets/gata.png assets/gard.png; do
+          for f in index.html manifest.webmanifest js/sprites.js js/game.js assets/gata.png assets/gard.png \
+                   assets/icon-180.png assets/icon-192.png assets/icon-512.png assets/icon-maskable-512.png; do
             test -s "$rel/$f" || { echo "Missing $rel/$f"; exit 1; }
           done
           previous=$(readlink current || true)
